@@ -39,31 +39,20 @@ export default ({ filter }: SandboxHookRegisterContext, { services }) => {
       if (!query.search) return query
       // Load _search_config field metadata from Directus.
       // Unfortunately, we can't filter by interface, so the field name is hardcoded for all collections.
-      const fieldsService = new services.FieldsService({
-        schema: context?.schema,
-        accountability: { admin: true },
-      })
+      const searchConfigField = context.schema.collections[collection].fields['_search_config'];
 
-      // Bail out early if we don't find any search configuration information.
-      let searchConfig = null
-      try {
-        searchConfig = (
-          await fieldsService.readOne(collection, '_search_config')
-        )?.meta?.options?.search_config
-        if (!searchConfig) return query
-      } catch (e) {
-        return query
-      }
+      if (!searchConfigField.meta?.options?.search_config) return query;
 
-      const searchFilter = recursivelyReplaceString(searchConfig, (entry) =>
+      const searchFilter = recursivelyReplaceString(searchConfigField.meta.options.search_config, (entry) =>
         entry.replace('$SEARCH', query.search || ''),
       )
 
       // Take search out of the query.
-      const modifiedQuery = { ...query, search: undefined }
-      if (!modifiedQuery.filter) modifiedQuery.filter = searchFilter
-      else modifiedQuery.filter = { _and: [modifiedQuery.filter, searchFilter] }
-      return modifiedQuery
+      delete(query.search);
+      
+      if (!query.filter) query.filter = searchFilter
+      else query.filter = { _and: [query.filter, searchFilter] }
+      return query
     },
   )
 }
