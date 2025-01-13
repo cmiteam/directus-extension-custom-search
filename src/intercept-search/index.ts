@@ -6,7 +6,7 @@ function recursivelyReplaceString(
   // User-defined string replacement function.
   replaceFunc: (string: string) => string,
 ) {
-  if (!value) return value
+  if (value == null) return value
 
   if (Array.isArray(value)) {
     // Iterate through arrays and recursively replace any strings in them.
@@ -18,9 +18,12 @@ function recursivelyReplaceString(
     for (let key in value) {
       value[key] = recursivelyReplaceString(value[key], replaceFunc)
     }
-  } else if (typeof value === 'string') {
+  } else if (typeof value === 'string' && value === '$SEARCH') {
     // Replace strings with user defined function.
     value = replaceFunc(value)
+  } else if (typeof value === 'string' && value == '-1') {
+    const result = +replaceFunc('$SEARCH')
+    if (!isNaN(result)) value = result
   }
 
   return value
