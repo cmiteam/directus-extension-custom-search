@@ -44,7 +44,7 @@ export default ({ filter }: SandboxHookRegisterContext, { services }) => {
       // Unfortunately, we can't filter by interface, so the field name is hardcoded for all collections.
       const fieldsService = new services.FieldsService({
         schema: context?.schema,
-        accountability: { admin: true },
+        accountability: { admin: true, roles: [] },
       })
 
       // Bail out early if we don't find any search configuration information.
