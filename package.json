@@ -1,62 +1,62 @@
 {
-	"name": "directus-extension-custom-search",
-	"description": "Override the Directus internal search system with a custom search filter - supports relationships",
-	"icon": "extension",
-	"version": "0.1.0",
-	"license": "MIT",
-	"contributors": [
-		{
-			"name": "Creation Ministries International - IT Team",
-			"url": "https://creation.com"
-		}
-	],
-	"repository": {
-		"type": "git",
-		"url": "github:cmiteam/directus-extension-custom-search"
-	},
-	"keywords": [
-		"directus",
-		"directus-extension",
-		"directus-extension-bundle"
-	],
-	"type": "module",
-	"files": [
-		"dist"
-	],
-	"directus:extension": {
-		"type": "bundle",
-		"sandbox": {
-			"enabled": true,
-			"requestedScopes": {}
-		},
-		"path": {
-			"app": "dist/app.js",
-			"api": "dist/api.js"
-		},
-		"entries": [
-			{
-				"type": "hook",
-				"name": "intercept-search",
-				"source": "src/intercept-search/index.ts"
-			},
-			{
-				"type": "interface",
-				"name": "search-configuration",
-				"source": "src/search-configuration/index.ts"
-			}
-		],
-		"host": "^10.10.0"
-	},
-	"scripts": {
-		"build": "directus-extension build",
-		"dev": "directus-extension build -w --no-minify",
-		"link": "directus-extension link",
-		"add": "directus-extension add"
-	},
-	"devDependencies": {
-		"@directus/extensions-sdk": "^16",
-		"@types/node": "^20.12.13",
-		"typescript": "^5.4.5",
-		"vue": "^3.4.27"
-	}
+  "name": "directus-extension-custom-search",
+  "description": "Override the Directus internal search system with a custom search filter - supports relationships",
+  "icon": "extension",
+  "version": "0.1.0",
+  "license": "MIT",
+  "contributors": [
+    {
+      "name": "Creation Ministries International - IT Team",
+      "url": "https://creation.com"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "github:cmiteam/directus-extension-custom-search"
+  },
+  "keywords": [
+    "directus",
+    "directus-extension",
+    "directus-extension-bundle"
+  ],
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "directus:extension": {
+    "type": "bundle",
+    "sandbox": {
+      "enabled": true,
+      "requestedScopes": {}
+    },
+    "path": {
+      "app": "dist/app.js",
+      "api": "dist/api.js"
+    },
+    "entries": [
+      {
+        "type": "hook",
+        "name": "intercept-search",
+        "source": "src/intercept-search/index.ts"
+      },
+      {
+        "type": "interface",
+        "name": "search-configuration",
+        "source": "src/search-configuration/index.ts"
+      }
+    ],
+    "host": "^10.10.0"
+  },
+  "scripts": {
+    "build": "directus-extension build",
+    "dev": "directus-extension build -w --no-minify",
+    "link": "directus-extension link",
+    "add": "directus-extension add"
+  },
+  "devDependencies": {
+    "@directus/extensions-sdk": "^17",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vue": "^3.5.26"
+  }
 }
