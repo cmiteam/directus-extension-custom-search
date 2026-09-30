@@ -56,10 +56,10 @@
   },
   "devDependencies": {
     "@cmiteam/tsconfig": "workspace:*",
-    "@directus/extensions-sdk": "^18.0.1",
+    "@directus/extensions-sdk": "^18.0.5",
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vue": "^3.5.28",
+    "vue": "^3.5.43",
     "vue-tsc": "catalog:"
   }
 }
