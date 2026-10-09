@@ -1,4 +1,4 @@
-import type { SandboxHookRegisterContext } from 'directus:api'
+import { defineHook } from '@directus/extensions-sdk'
 
 // Recursively run a replace operation on any string object values.
 function recursivelyReplaceString(
@@ -30,21 +30,30 @@ function recursivelyReplaceString(
 }
 
 // Overrides the search functionality with additional configuration from a _search_config field from a collection.
-export default ({ filter }: SandboxHookRegisterContext, { services }) => {
+export default defineHook(({ filter }, { services }) => {
   filter(
     'items.query',
-    //@ts-ignore
     async (
-      query: { search?: string; filter: any },
-      { collection }: { collection: string },
-      context: { schema: any },
+      query: { search?: string; filter: unknown },
+      meta,
+      context,
     ) => {
       if (!query.search) return query
+      const collection: string = meta['collection']
+      // Without a schema the fields lookup below can't work anyway.
+      if (!context?.schema) return query
       // Load _search_config field metadata from Directus.
       // Unfortunately, we can't filter by interface, so the field name is hardcoded for all collections.
       const fieldsService = new services.FieldsService({
-        schema: context?.schema,
-        accountability: { admin: true, roles: [] },
+        schema: context.schema,
+        accountability: {
+          admin: true,
+          roles: [],
+          role: null,
+          user: null,
+          app: false,
+          ip: null,
+        },
       })
 
       // Bail out early if we don't find any search configuration information.
@@ -69,4 +78,4 @@ export default ({ filter }: SandboxHookRegisterContext, { services }) => {
       return modifiedQuery
     },
   )
-}
+})

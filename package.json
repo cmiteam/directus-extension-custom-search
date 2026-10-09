@@ -25,10 +25,6 @@
   ],
   "directus:extension": {
     "type": "bundle",
-    "sandbox": {
-      "enabled": true,
-      "requestedScopes": {}
-    },
     "path": {
       "app": "dist/app.js",
       "api": "dist/api.js"

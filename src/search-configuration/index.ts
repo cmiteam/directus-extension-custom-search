@@ -1,6 +1,5 @@
 import { defineInterface } from '@directus/extensions-sdk'
 import OptionsComponent from './options.vue'
-import { ComponentOptions } from 'vue'
 
 export default defineInterface({
   id: 'search-configuration',
@@ -9,7 +8,8 @@ export default defineInterface({
   description:
     'Override the Directus internal search system with a custom search filter - supports relationships.',
   component: () => null,
-  options: OptionsComponent as ComponentOptions,
+  // @ts-expect-error Directus types this as Exclude<ComponentOptions, any>, which is never, but the app accepts an options component
+  options: OptionsComponent,
   hideLabel: true,
   hideLoader: true,
   types: ['alias'],
