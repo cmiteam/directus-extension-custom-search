@@ -1,63 +1,39 @@
 import { defineHook } from '@directus/extensions-sdk'
+import {
+  applySearchConfig,
+  MAX_PREFETCHED_IDS,
+  type Filter,
+  type SearchQuery,
+} from './apply-search-config'
 
-// Recursively run a replace operation on any string object values.
-function recursivelyReplaceString(
-  value: any,
-  // User-defined string replacement function.
-  replaceFunc: (string: string) => string,
-) {
-  if (value == null) return value
-
-  if (Array.isArray(value)) {
-    // Iterate through arrays and recursively replace any strings in them.
-    for (let i = 0; i < value.length; i++) {
-      value[i] = recursivelyReplaceString(value[i], replaceFunc)
-    }
-  } else if (typeof value === 'object') {
-    // Iterate through object and recursively replace any strings in them.
-    for (let key in value) {
-      value[key] = recursivelyReplaceString(value[key], replaceFunc)
-    }
-  } else if (typeof value === 'string' && value === '$SEARCH') {
-    // Replace strings with user defined function.
-    value = replaceFunc(value)
-  } else if (typeof value === 'string' && value == '-1') {
-    const result = +replaceFunc('$SEARCH')
-    if (!isNaN(result)) value = result
-  }
-
-  return value
+const SYSTEM_ACCOUNTABILITY = {
+  admin: true,
+  roles: [],
+  role: null,
+  user: null,
+  app: false,
+  ip: null,
 }
 
 // Overrides the search functionality with additional configuration from a _search_config field from a collection.
-export default defineHook(({ filter }, { services }) => {
+export default defineHook(({ filter }, { services, database, logger }) => {
   filter(
     'items.query',
-    async (
-      query: { search?: string; filter: unknown },
-      meta,
-      context,
-    ) => {
+    async (query: SearchQuery, meta, context): Promise<SearchQuery> => {
       if (!query.search) return query
       const collection: string = meta['collection']
       // Without a schema the fields lookup below can't work anyway.
-      if (!context?.schema) return query
+      const schema = context?.schema
+      if (!schema) return query
       // Load _search_config field metadata from Directus.
       // Unfortunately, we can't filter by interface, so the field name is hardcoded for all collections.
       const fieldsService = new services.FieldsService({
-        schema: context.schema,
-        accountability: {
-          admin: true,
-          roles: [],
-          role: null,
-          user: null,
-          app: false,
-          ip: null,
-        },
+        schema,
+        accountability: SYSTEM_ACCOUNTABILITY,
       })
 
       // Bail out early if we don't find any search configuration information.
-      let searchConfig = null
+      let searchConfig: Filter | null = null
       try {
         searchConfig = (
           await fieldsService.readOne(collection, '_search_config')
@@ -67,15 +43,48 @@ export default defineHook(({ filter }, { services }) => {
         return query
       }
 
-      const searchFilter = recursivelyReplaceString(searchConfig, (entry) =>
-        entry.replace('$SEARCH', query.search || ''),
-      )
+      const primaryKey: string | undefined =
+        schema.collections[collection]?.primary
+      if (!primaryKey) return query
 
-      // Take search out of the query.
-      const modifiedQuery = { ...query, search: undefined }
-      if (!modifiedQuery.filter) modifiedQuery.filter = searchFilter
-      else modifiedQuery.filter = { _and: [modifiedQuery.filter, searchFilter] }
-      return modifiedQuery
+      // Narrow pre-query for the matching keys (see apply-search-config.ts).
+      // It runs as the caller, so field and item permissions apply to it
+      // exactly as they did to the single query before, and with events off
+      // so it neither re-enters this hook nor fires read hooks for an
+      // internal lookup.
+      const resolveIds = async (searchFilter: Filter) => {
+        const items = new services.ItemsService(collection, {
+          schema,
+          accountability: context.accountability,
+          knex: database,
+        })
+        type ItemsQuery = Parameters<typeof items.readByQuery>[0]
+        try {
+          const rows: Record<string, string | number>[] =
+            await items.readByQuery(
+              {
+                fields: [primaryKey],
+                filter: searchFilter as ItemsQuery['filter'],
+                limit: MAX_PREFETCHED_IDS + 1,
+              },
+              { emitEvents: false },
+            )
+          if (rows.length > MAX_PREFETCHED_IDS) {
+            logger.debug(
+              `[custom-search] ${collection}: more than ${MAX_PREFETCHED_IDS} matches for "${query.search}", using the configured filter directly`,
+            )
+            return null
+          }
+          return rows.map((row) => row[primaryKey]!)
+        } catch (error) {
+          logger.warn(
+            `[custom-search] ${collection}: id pre-query failed, using the configured filter directly: ${(error as Error)?.message ?? error}`,
+          )
+          return null
+        }
+      }
+
+      return applySearchConfig({ query, searchConfig, primaryKey, resolveIds })
     },
   )
 })
