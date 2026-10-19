@@ -1,8 +1,8 @@
 import { defineHook } from '@directus/extensions-sdk'
 import {
   applySearchConfig,
-  MAX_PREFETCHED_IDS,
   type Filter,
+  type PageRequest,
   type SearchQuery,
 } from './apply-search-config'
 
@@ -47,12 +47,12 @@ export default defineHook(({ filter }, { services, database, logger }) => {
         schema.collections[collection]?.primary
       if (!primaryKey) return query
 
-      // Narrow pre-query for the matching keys (see apply-search-config.ts).
-      // It runs as the caller, so field and item permissions apply to it
-      // exactly as they did to the single query before, and with events off
-      // so it neither re-enters this hook nor fires read hooks for an
-      // internal lookup.
-      const resolveIds = async (searchFilter: Filter) => {
+      // Narrow pre-query for the requested page of keys (see
+      // apply-search-config.ts). It runs as the caller, so field and item
+      // permissions apply to it exactly as they did to the single query
+      // before, and with events off so it neither re-enters this hook nor
+      // fires read hooks for an internal lookup.
+      const resolveIds = async (searchFilter: Filter, page: PageRequest) => {
         const items = new services.ItemsService(collection, {
           schema,
           accountability: context.accountability,
@@ -65,13 +65,16 @@ export default defineHook(({ filter }, { services, database, logger }) => {
               {
                 fields: [primaryKey],
                 filter: searchFilter as ItemsQuery['filter'],
-                limit: MAX_PREFETCHED_IDS + 1,
+                sort: page.sort,
+                limit: page.limit,
+                offset: page.offset,
+                page: page.page,
               },
               { emitEvents: false },
             )
-          if (rows.length > MAX_PREFETCHED_IDS) {
+          if (rows.length > page.declineAbove) {
             logger.debug(
-              `[custom-search] ${collection}: more than ${MAX_PREFETCHED_IDS} matches for "${query.search}", using the configured filter directly`,
+              `[custom-search] ${collection}: more than ${page.declineAbove} matches for "${query.search}" (limit ${query.limit ?? 'default'}), using the configured filter directly`,
             )
             return null
           }

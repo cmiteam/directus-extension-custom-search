@@ -6,11 +6,22 @@
  * index, but the list query also selects whatever columns the preset shows,
  * and for that the planner abandons the index and scans the whole table —
  * on `article` that is reading past every row's body, 14 s on prod
- * (2026-10-19). So the matching primary keys are resolved first with a
- * narrow query (`resolveIds`), and Directus is handed `pk IN (…)`, which is
- * primary-key lookups no matter which columns or sort the caller asked for.
- * When there are too many matches — or the resolver fails — the configured
- * filter is used directly, as before.
+ * (2026-10-19). So for a list query the primary keys of the requested page
+ * are resolved first with a narrow query (`resolveIds`), and Directus is
+ * handed `pk IN (…)` for that page, which is key lookups no matter which
+ * columns the caller asked for. Resolving only the page matters: the first
+ * keystrokes of a search ("a", "re") match most of the table.
+ *
+ * The caller's `sort`, `limit`, `offset` and `page` are passed to the
+ * pre-query untouched, so Directus applies its own defaults (default limit,
+ * default sort, page→offset) identically to both queries; the only
+ * substitutions are the cap for unbounded or oversized limits and the primary
+ * key as a tiebreaker behind an explicit sort.
+ *
+ * Aggregate and grouped queries (the admin's counts) are left on the
+ * configured filter: selecting nothing but a count is already served from the
+ * index. When the resolver declines (too many ids, or an error), the
+ * configured filter is used directly, as before.
  */
 
 export type Filter = Record<string, unknown>
@@ -21,7 +32,24 @@ export const MAX_PREFETCHED_IDS = 5000
 export interface SearchQuery {
   search?: string
   filter?: unknown
+  sort?: unknown
+  limit?: number
+  offset?: number
+  page?: number
+  aggregate?: unknown
+  /** `groupBy` in the URL; sanitizeQuery stores it as `group`. */
+  group?: unknown
   [key: string]: unknown
+}
+
+/** What to ask the narrow pre-query for. */
+export interface PageRequest {
+  sort: string[] | undefined
+  limit: number | undefined
+  offset: number | undefined
+  page: number | undefined
+  /** Give up (use the filter directly) when more than this many keys come back. */
+  declineAbove: number
 }
 
 export interface ApplySearchConfigOptions {
@@ -29,11 +57,14 @@ export interface ApplySearchConfigOptions {
   searchConfig: Filter
   primaryKey: string
   /**
-   * Matching primary keys for the given filter (the search filter, combined
-   * with the caller's own filter when there is one), or null to fall back to
-   * the filter itself.
+   * Primary keys of the requested page for the given filter (the search
+   * filter, combined with the caller's own filter when there is one), or
+   * null to fall back to the filter itself.
    */
-  resolveIds: (filter: Filter) => Promise<Array<string | number> | null>
+  resolveIds: (
+    filter: Filter,
+    page: PageRequest,
+  ) => Promise<Array<string | number> | null>
 }
 
 /**
@@ -60,6 +91,37 @@ export function buildSearchFilter(searchConfig: Filter, term: string): Filter {
   return replace(searchConfig) as Filter
 }
 
+/**
+ * The pre-query's paging, or null when the request cannot be served by ids:
+ * an unbounded or oversized limit fetches one past the cap so an overflow can
+ * be detected, which is only meaningful from the start of the result set.
+ */
+export function pageRequest(
+  query: Pick<SearchQuery, 'sort' | 'limit' | 'offset' | 'page'>,
+  primaryKey: string,
+): PageRequest | null {
+  const oversized =
+    query.limit !== undefined &&
+    (query.limit === -1 || query.limit > MAX_PREFETCHED_IDS)
+  if (oversized && ((query.page ?? 1) > 1 || query.offset)) return null
+
+  const given = Array.isArray(query.sort) ? query.sort.map(String) : []
+  const last = given[given.length - 1]?.replace(/^-/, '')
+  const sort = !given.length
+    ? undefined
+    : last === primaryKey
+      ? given
+      : [...given, primaryKey]
+
+  return {
+    sort,
+    limit: oversized ? MAX_PREFETCHED_IDS + 1 : query.limit,
+    offset: query.offset,
+    page: query.page,
+    declineAbove: MAX_PREFETCHED_IDS,
+  }
+}
+
 export async function applySearchConfig({
   query,
   searchConfig,
@@ -67,24 +129,30 @@ export async function applySearchConfig({
   resolveIds,
 }: ApplySearchConfigOptions): Promise<SearchQuery> {
   const searchFilter = buildSearchFilter(searchConfig, query.search ?? '')
-  const withCallersFilter: Filter = query.filter
-    ? { _and: [query.filter, searchFilter] }
-    : searchFilter
+  const { search: _search, ...rest } = query
+  const withFilter = (effective: Filter): SearchQuery => ({
+    ...rest,
+    filter: query.filter ? { _and: [query.filter, effective] } : effective,
+  })
+  const fallback = withFilter(searchFilter)
+
+  if (query.aggregate || query.group) return fallback
+
+  const page = pageRequest(query, primaryKey)
+  if (!page) return fallback
 
   // The resolver is expected to report its own failures; this is the last line
   // of defence so a search never breaks because the shortcut did.
   let ids: Array<string | number> | null = null
   try {
-    ids = await resolveIds(withCallersFilter)
+    ids = await resolveIds(fallback.filter as Filter, page)
   } catch {
     ids = null
   }
+  if (!ids) return fallback
 
-  const effective: Filter = ids ? { [primaryKey]: { _in: ids } } : searchFilter
-
-  const { search: _search, ...rest } = query
-  return {
-    ...rest,
-    filter: query.filter ? { _and: [query.filter, effective] } : effective,
-  }
+  // The ids are exactly the requested page, so the real query reads them from
+  // the start; its own sort and limit still apply and give the same order.
+  const { page: _page, ...paged } = withFilter({ [primaryKey]: { _in: ids } })
+  return { ...paged, offset: 0 }
 }

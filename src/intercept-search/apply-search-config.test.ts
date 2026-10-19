@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   applySearchConfig,
   MAX_PREFETCHED_IDS,
+  pageRequest,
   type Filter,
 } from './apply-search-config'
 
@@ -147,7 +148,142 @@ describe('applySearchConfig', () => {
     expect(stored).toEqual(config)
   })
 
-  test('exposes the id cap the hook uses to decide when to fall back', () => {
-    expect(MAX_PREFETCHED_IDS).toBeGreaterThan(1000)
+  test('a list query pre-resolves only the requested page, then reads that page from offset 0', async () => {
+    // "re" matches 6,526 articles; resolving them all would trip the cap and
+    // fall back to the table scan. The page of ids is what the list needs,
+    // and the covering index answers it with the sort applied (9 ms on prod).
+    // Paging parameters are handed to Directus untouched, so it applies the
+    // same defaults and page→offset rule to both queries.
+    let seenPage: unknown
+    const result = await applySearchConfig({
+      query: {
+        search: 're',
+        filter: undefined,
+        sort: ['-date_created'],
+        limit: 25,
+        page: 3,
+      },
+      searchConfig: config,
+      primaryKey: 'id',
+      resolveIds: async (_filter, page) => {
+        seenPage = page
+        return ['x', 'y']
+      },
+    })
+
+    expect(seenPage).toEqual({
+      sort: ['-date_created', 'id'],
+      limit: 25,
+      offset: undefined,
+      page: 3,
+      declineAbove: MAX_PREFETCHED_IDS,
+    })
+    expect(result.filter).toEqual({ id: { _in: ['x', 'y'] } })
+    expect(result.sort).toEqual(['-date_created'])
+    expect(result.limit).toBe(25)
+    expect(result.offset).toBe(0)
+    expect(result.page).toBeUndefined()
+  })
+
+  test('an aggregate query is not rewritten to ids — the configured filter is already index-friendly', async () => {
+    let called = false
+    const result = await applySearchConfig({
+      query: { search: 're', filter: undefined, aggregate: { countDistinct: ['id'] } },
+      searchConfig: config,
+      primaryKey: 'id',
+      resolveIds: async () => {
+        called = true
+        return []
+      },
+    })
+
+    expect(called).toBe(false)
+    expect(result.search).toBeUndefined()
+    expect(result.filter).toMatchObject({ _and: [{ _or: expect.any(Array) }] })
+  })
+
+  test('a grouped query (Directus stores groupBy as `group`) is not rewritten either', async () => {
+    let called = false
+    const result = await applySearchConfig({
+      query: { search: 're', filter: undefined, group: ['category'] },
+      searchConfig: config,
+      primaryKey: 'id',
+      resolveIds: async () => {
+        called = true
+        return []
+      },
+    })
+
+    expect(called).toBe(false)
+    expect(result.group).toEqual(['category'])
+  })
+
+  test('when the resolver declines a page request the paging is left untouched', async () => {
+    const result = await applySearchConfig({
+      query: { search: 're', filter: undefined, limit: 25, page: 3 },
+      searchConfig: config,
+      primaryKey: 'id',
+      resolveIds: async () => null,
+    })
+
+    expect(result.page).toBe(3)
+    expect(result.offset).toBeUndefined()
+  })
+
+  test('an oversized request on a later page is not attempted at all', async () => {
+    // Substituting the cap for the limit would move the page; use the filter.
+    let called = false
+    const result = await applySearchConfig({
+      query: { search: 're', filter: undefined, limit: -1, page: 2 },
+      searchConfig: config,
+      primaryKey: 'id',
+      resolveIds: async () => {
+        called = true
+        return []
+      },
+    })
+
+    expect(called).toBe(false)
+    expect(result.page).toBe(2)
+    expect(result.filter).toMatchObject({ _and: [{ _or: expect.any(Array) }] })
+  })
+})
+
+describe('pageRequest', () => {
+  test('passes limit, offset and page through untouched, with the cap as the decline threshold', () => {
+    expect(pageRequest({ limit: 10, offset: 40 }, 'id')).toEqual({
+      sort: undefined,
+      limit: 10,
+      offset: 40,
+      page: undefined,
+      declineAbove: MAX_PREFETCHED_IDS,
+    })
+  })
+
+  test('no limit stays no limit: Directus applies its own default to both queries', () => {
+    expect(pageRequest({ page: 3 }, 'id')!).toMatchObject({ limit: undefined, page: 3 })
+  })
+
+  test('no sort stays no sort: Directus’s default sort then applies to both queries', () => {
+    expect(pageRequest({ limit: 5 }, 'id')!.sort).toBeUndefined()
+  })
+
+  test('a given sort gains the primary key as tiebreaker so page boundaries are stable', () => {
+    expect(pageRequest({ sort: ['-date_created'], limit: 5 }, 'id')!.sort).toEqual(['-date_created', 'id'])
+    expect(pageRequest({ sort: ['-date_created', '-id'], limit: 5 }, 'id')!.sort).toEqual(['-date_created', '-id'])
+  })
+
+  test('an unbounded request fetches one past the cap so the overflow can be detected', () => {
+    expect(pageRequest({ limit: -1 }, 'id')!.limit).toBe(MAX_PREFETCHED_IDS + 1)
+  })
+
+  test('a bounded limit above the cap is treated like unbounded rather than silently truncated', () => {
+    // Regression: `limit=10000` was clamped to 5000 ids and returned 5000 rows.
+    expect(pageRequest({ limit: 10000 }, 'id')!.limit).toBe(MAX_PREFETCHED_IDS + 1)
+  })
+
+  test('an oversized request beyond page 1 is declined up front', () => {
+    expect(pageRequest({ limit: 10000, page: 2 }, 'id')).toBeNull()
+    expect(pageRequest({ limit: -1, offset: 10 }, 'id')).toBeNull()
   })
 })
