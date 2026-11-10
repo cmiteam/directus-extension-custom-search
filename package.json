@@ -36,6 +36,11 @@
         "source": "src/intercept-search/index.ts"
       },
       {
+        "type": "hook",
+        "name": "text-filter-offload",
+        "source": "src/text-filter-offload/index.ts"
+      },
+      {
         "type": "interface",
         "name": "search-configuration",
         "source": "src/search-configuration/index.ts"
@@ -55,6 +60,7 @@
     "@cmiteam/tsconfig": "workspace:*",
     "@directus/extensions-sdk": "^18.0.6",
     "@types/node": "catalog:",
+    "sqlite3": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "vue": "^3.5.43",
